@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "vectura-common",
+    "vectura-ebpf",
+    "vectura-agent",
+    "xtask"
+]
+
+# Only build the user-space agent and xtask during a standard `cargo build`
+default-members = ["vectura-agent", "xtask"]
+resolver = "2"
+
+# Centralize Aya dependencies to pull from the exact same commit
+[workspace.dependencies]
+aya = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-log = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
+aya-log-ebpf = { git = "https://github.com/aya-rs/aya", branch = "main" }
+
+# Profiles moved here to apply across the whole workspace
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+debug = true
+panic = "abort"

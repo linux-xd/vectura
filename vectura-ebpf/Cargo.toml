@@ -1,0 +1,11 @@
+[package]
+name = "vectura-ebpf"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Inherit from workspace
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+vectura-common = { path = "../vectura-common" }

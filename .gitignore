@@ -1,0 +1,53 @@
+# ------------------------------------------------------------------------------
+# Rust / Cargo
+# ------------------------------------------------------------------------------
+# The target directory contains all compiled binaries and eBPF bytecode
+/target/
+
+# ------------------------------------------------------------------------------
+# Database (SQLx / SQLite)
+# ------------------------------------------------------------------------------
+# Ignore local SQLite database files and their temporary transaction logs
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ------------------------------------------------------------------------------
+# Environment & Logs
+# ------------------------------------------------------------------------------
+# Ignore local environment variables and server logs
+.env
+*.log
+
+# ------------------------------------------------------------------------------
+# IDEs & Editors
+# ------------------------------------------------------------------------------
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ / RustRover
+.idea/
+*.iml
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# Operating System
+# ------------------------------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db

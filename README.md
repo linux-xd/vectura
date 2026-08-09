@@ -2,7 +2,7 @@
 
 ## Live Dashboard
 
-<img src="assets/ui-demo.png" alt="Vectura UI" width="800">
+<img src="assets/ui-demo.png" alt="Vectura UI" width="1000">
 
 **A Type & Memory Safe eBPF Network Analyzer built purely in Rust. 🦀**
 
@@ -26,11 +26,12 @@ Powered by the Aya framework, Vectura proves that Rust can dominate both user-sp
 
 ## ✨ In-Depth Features
 
-* 🛡️ **100% Rust Architecture:** Both the user-space agent and the kernel-space eBPF programs are written entirely in safe Rust. No C wrappers, no BCC dependencies, and no Clang required at runtime.
-* ⚡ **Kernel-Level Speed via Traffic Control (TC):** Vectura attaches directly to the TC ingress hook. It reads IP headers the microsecond they hit the network interface, long before they traverse the complex Linux networking stack or reach standard applications.
-* 🖥️ **Live Ratatui TUI Dashboard:** A hyper-responsive, real-time terminal interface that runs efficiently over SSH. It visualizes live packet feeds, source/destination IPs, and payload sizes without eating up your system resources.
+* 🛡️ **100% Rust Architecture & Cryptography:** Both the user-space agent and the kernel-space eBPF programs are written entirely in safe Rust. Utilizing `rustls` instead of OpenSSL eliminates messy C-dependencies and `pkg-config` headaches. No BCC dependencies and no Clang required at runtime.
+* ⚡ **Kernel-Level Speed via Traffic Control (TC):** Vectura attaches directly to the TC ingress hook. It reads IP headers and dynamically extracts L4 (TCP/UDP) ports the microsecond they hit the network interface, long before they traverse the complex Linux networking stack.
+* 🖥️ **Responsive Full-Screen Ratatui TUI:** A dynamic, full-width terminal dashboard that automatically scales to fit your terminal height. Features granular columns separating IPs and Ports, with color-coded formatting for easy traffic scanning.
+* 🔀 **Multi-Core Asynchronous Polling:** Spawns dedicated Tokio background tasks for every online CPU core, utilizing `mpsc` channels to ensure the UI never blocks while capturing packets across the entire system.
+* 🌐 **Universal Static Binary:** Cross-compiled using `musl`, resulting in a zero-dependency, statically linked executable that runs natively on *any* x86_64 Linux distribution (Ubuntu, Arch, Debian, Fedora, etc.).
 * 🤖 **Headless Daemon & API:** Run Vectura as a background service. It embeds an asynchronous Axum REST server, allowing you to scrape kernel network metrics into Prometheus or Grafana for enterprise fleet monitoring.
-* 🌉 **Zero-Copy IPC (PerfEventArray):** Kernel data isn't clumsily copied. Vectura uses high-speed, memory-mapped `PerfEventArray` ring buffers. Dedicated blocking threads in user-space poll this buffer and safely bridge the data into the Tokio async runtime.
 
 ---
 
@@ -44,6 +45,7 @@ vectura/
 ├── vectura-ebpf/     🧠 Kernel-Space Code (Compiles to eBPF bytecode)
 ├── vectura-agent/    💻 User-Space Code (Tokio Async, Ratatui, Axum Server)
 └── xtask/            🛠️ Build automation scripts
+
 ```
 
 ---
@@ -58,7 +60,7 @@ vectura/
 
 ## 🛠️ Prerequisites
 
-To build and run Vectura, you need a Linux system (Kernel 5.15+ recommended) and the Rust dual-toolchain setup.
+To build and run Vectura, you need a Linux system (Kernel 5.14+ recommended for BTF support) and the Rust dual-toolchain setup.
 
 **1. Install Rust Toolchains:**
 
@@ -66,13 +68,22 @@ To build and run Vectura, you need a Linux system (Kernel 5.15+ recommended) and
 rustup toolchain install stable
 rustup toolchain install nightly
 rustup component add rust-src --toolchain nightly
+
 ```
 
-**2. Install the BPF Linker:**
+**2. Add the Musl Target (For Universal Builds):**
 
 ```bash
-cargo install bpf-linker
+rustup target add x86_64-unknown-linux-musl
+
 ```
+
+**3. Install the Musl C Compiler:**
+Depending on your distribution, install the `musl` wrapper for statically compiling optimizations:
+
+* **Arch Linux:** `sudo pacman -S musl`
+* **Ubuntu/Debian:** `sudo apt install musl-tools`
+* **Fedora:** `sudo dnf install musl-gcc`
 
 ---
 
@@ -83,13 +94,16 @@ Because of the architectural separation, Vectura requires a two-step build:
 **Step 1: Compile the Kernel eBPF Bytecode (Requires Nightly)**
 
 ```bash
-cargo +nightly build --package vectura-ebpf --release --target bpfel-unknown-none -Z build-std=core,compiler_builtins
+cargo +nightly build --package vectura-ebpf --release --target bpfel-unknown-none -Z build-std=core
+
 ```
 
-**Step 2: Compile the User-Space Agent (Requires Stable)**
+**Step 2: Compile the User-Space Universal Binary (Requires Stable)**
+Build the statically linked user-space agent using the `musl` wrapper. This ensures maximum portability across all Linux distros.
 
 ```bash
-cargo +stable build --package vectura-agent --release --target x86_64-unknown-linux-gnu
+CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
+
 ```
 
 ---
@@ -100,20 +114,22 @@ cargo +stable build --package vectura-agent --release --target x86_64-unknown-li
 
 ### 1. Launching the Live TUI
 
-Run the interactive dashboard on your target network interface (replace `wlan0` with your active interface, e.g., `eth0` or `enp3s0`).
+Run the interactive dashboard on your target network interface (replace `wlan0` with your active interface, e.g., `eth0` or `wlp4s0`).
 
 ```bash
-sudo ./target/x86_64-unknown-linux-gnu/release/vectura-agent --interface wlan0 tui
+sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0 tui
+
 ```
 
-🛑 **Controls:** Press `q` or `Esc` to safely detach the kernel hook and exit.
+🛑 **Controls:** Press `q` or `Esc` to safely detach the kernel hook, restore the terminal, and exit.
 
 ### 2. Launching the Headless Server
 
 For continuous monitoring, run Vectura as a background server exposing a REST API.
 
 ```bash
-sudo ./target/x86_64-unknown-linux-gnu/release/vectura-agent --interface wlan0 server --port 3000
+sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0 server --port 3000
+
 ```
 
 📡 **Test the API:** `curl http://localhost:3000/metrics`
@@ -124,16 +140,17 @@ If the application exits abruptly (e.g., SIGKILL) and the eBPF hook fails to det
 
 ```bash
 sudo tc qdisc del dev wlan0 clsact
+
 ```
 
 ---
 
 ## 🗺️ Development Roadmap
 
-- [x] eBPF Ingress Hook Initialization
-* [x] Synchronous `PerfEventArray` Kernel-to-User IPC
-* [x] Live Ratatui Terminal Interface
-* [ ] Deep Packet Inspection (TCP/UDP Port Extraction)
+* [x] eBPF Ingress Hook Initialization
+* [x] Asynchronous Multi-Core `PerfEventArray` Kernel-to-User IPC
+* [x] Live Responsive Ratatui Terminal Interface
+* [x] Deep Packet Inspection (TCP/UDP Port Extraction & IHL Calculation)
 * [ ] SQLite Persistent Logging via SQLx
 * [ ] Prometheus Metrics Exporter
 * [ ] Implement `RingBuf` for kernel 5.8+ optimization
@@ -141,10 +158,11 @@ sudo tc qdisc del dev wlan0 clsact
 ---
 
 ## 🤝 Contributing
-
+Still W.I.P
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-Please see our technical suggestions above in the Roadmap or check out the [Issues tab](../../issues) for `good first issue` tags (like IPv6 support or DNS resolution).
+Please see our technical suggestions above in the Roadmap or check out the [Issues tab](https://www.google.com/search?q=../../issues) for `good first issue` tags (like IPv6 support or DNS resolution).
 
 ---
+
 *Built with [Aya](https://aya-rs.dev/) — The future of eBPF is Rust. 🦀*

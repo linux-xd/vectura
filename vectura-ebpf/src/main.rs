@@ -25,32 +25,45 @@ pub fn vectura_ingress(ctx: TcContext) -> i32 {
 // Minimal safe parsing skeleton for IPv4
 fn try_vectura_ingress(ctx: TcContext) -> Result<(), ()> {
     // 1. Read Ethernet Header (14 bytes)
-    let eth_proto = ctx.load::<u16>(12).map_err(|_| ())?;
+    let eth_proto = u16::from_be(ctx.load::<u16>(12).map_err(|_| ())?);
     
-    // Check if it's an IPv4 packet (0x0800 in network byte order -> 8)
-    if eth_proto != 8 {
+    // Check if it's an IPv4 packet (0x0800)
+    if eth_proto != 0x0800 {
         return Ok(()); 
     }
 
-    // 2. Read IPv4 Header (starts at offset 14)
+    // 2. Read IPv4 Header
     let saddr = ctx.load::<u32>(14 + 12).map_err(|_| ())?;
     let daddr = ctx.load::<u32>(14 + 16).map_err(|_| ())?;
     let protocol = ctx.load::<u8>(14 + 9).map_err(|_| ())?;
     
-    // Total packet length
+    // Calculate IP Header Length (IHL) to find where L4 (TCP/UDP) starts
+    let ihl_byte = ctx.load::<u8>(14).map_err(|_| ())?;
+    let ihl = (ihl_byte & 0x0F) * 4;
+    let l4_offset = 14 + ihl as usize;
+
+    let mut sport = 0;
+    let mut dport = 0;
+
+    // 3. Parse TCP (6) or UDP (17) Ports
+    if protocol == 6 || protocol == 17 {
+        sport = u16::from_be(ctx.load::<u16>(l4_offset).unwrap_or(0));
+        dport = u16::from_be(ctx.load::<u16>(l4_offset + 2).unwrap_or(0));
+    }
+
     let length = ctx.len();
 
-    // 3. Populate our shared struct
+    // 4. Populate shared struct
     let event = PacketEvent {
         saddr: u32::from_be(saddr),
         daddr: u32::from_be(daddr),
-        sport: 0, // Port parsing requires deeper TCP/UDP header inspection
-        dport: 0,
+        sport,
+        dport,
         protocol,
         length,
     };
 
-    // 4. Fire the event across the bridge to user-space
+    // 5. Fire event to user-space
     EVENTS.output(&ctx, &event, 0);
 
     Ok(())

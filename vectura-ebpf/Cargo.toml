@@ -4,8 +4,18 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[lib]
+name = "vectura_ebpf"
+path = "src/main.rs"
+
 [dependencies]
-# Inherit from workspace
-aya-ebpf = { workspace = true }
-aya-log-ebpf = { workspace = true }
+aya-ebpf = "0.1"
 vectura-common = { path = "../vectura-common" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+debug = true
+panic = "abort"

@@ -1,5 +1,9 @@
 # 🚀 VECTURA: Next-Generation Network Observability
 
+## Live Dashboard
+
+<img src="assets/ui-demo.png" alt="Vectura UI" width="800">
+
 **A Type & Memory Safe eBPF Network Analyzer built purely in Rust. 🦀**
 
 Vectura (from the Latin word for "transport" or "carriage") is a modern, high-performance network observability platform. By leveraging the [Aya eBPF framework](https://aya-rs.dev/), Vectura injects memory-safe Rust code directly into the Linux kernel to analyze network packets at wire speed. It bridges that raw data to a rich, asynchronous terminal UI (TUI) and a headless API in user-space.

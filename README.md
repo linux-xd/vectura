@@ -27,11 +27,13 @@ Powered by the Aya framework, Vectura proves that Rust can dominate both user-sp
 ## ✨ In-Depth Features
 
 * 🛡️ **100% Rust Architecture & Cryptography:** Both the user-space agent and the kernel-space eBPF programs are written entirely in safe Rust. Utilizing `rustls` instead of OpenSSL eliminates messy C-dependencies and `pkg-config` headaches. No BCC dependencies and no Clang required at runtime.
-* ⚡ **Kernel-Level Speed via Traffic Control (TC):** Vectura attaches directly to the TC ingress hook. It reads IP headers and dynamically extracts L4 (TCP/UDP) ports the microsecond they hit the network interface, long before they traverse the complex Linux networking stack.
-* 🖥️ **Responsive Full-Screen Ratatui TUI:** A dynamic, full-width terminal dashboard that automatically scales to fit your terminal height. Features granular columns separating IPs and Ports, with color-coded formatting for easy traffic scanning.
-* 🔀 **Multi-Core Asynchronous Polling:** Spawns dedicated Tokio background tasks for every online CPU core, utilizing `mpsc` channels to ensure the UI never blocks while capturing packets across the entire system.
+* ⚡ **Bidirectional Kernel-Level Tracking (TC):** Vectura attaches directly to both the Traffic Control (TC) **Ingress** and **Egress** hooks. It parses the IPv4 IHL dynamically to extract L4 Ports, TTLs, and TCP Flags (`SYN`, `ACK`, `FIN`, `RST`) the microsecond they hit the network interface.
+* 🖥️ **Advanced Multi-Pane Dashboard:** A highly responsive, `btop`-inspired terminal UI featuring:
+  * **Live Bandwidth Sparkline:** A 100-tick rolling graph visualizing real-time network throughput (Mbps).
+  * **Top Flows Leaderboard:** Aggregated analytics showing the highest bandwidth `Source ⟶ Destination` pairings.
+  * **Directional Packet Stream:** Color-coded forward (`-->`) and reverse (`<--`) traffic indicators for instantaneous flow comprehension.
+* 🔀 **Non-Blocking Async Engine:** Powered by a `tokio::select!` event loop, Vectura seamlessly handles multi-core eBPF telemetry ingestion, 1-second interval aggregations, and ~30 FPS UI rendering without ever dropping a packet.
 * 🌐 **Universal Static Binary:** Cross-compiled using `musl`, resulting in a zero-dependency, statically linked executable that runs natively on *any* x86_64 Linux distribution (Ubuntu, Arch, Debian, Fedora, etc.).
-* 🤖 **Headless Daemon & API:** Run Vectura as a background service. It embeds an asynchronous Axum REST server, allowing you to scrape kernel network metrics into Prometheus or Grafana for enterprise fleet monitoring.
 
 ---
 
@@ -52,7 +54,7 @@ vectura/
 
 ## 🎯 Real-World Use Cases
 
-* **SecOps & Intrusion Detection:** Audit live traffic and map internal subnet communication. Instantly identify anomalous payload sizes or unauthorized protocols hitting your servers.
+* **SecOps & Intrusion Detection:** Audit live traffic and map internal subnet communication. Instantly identify anomalous payload sizes, rogue SYN floods, or unauthorized protocols hitting your servers.
 * **DDoS & Flood Mitigation:** Monitor inbound packet velocity per source IP at the kernel level. Because it runs in TC, future updates to Vectura can actively drop malicious packets before they overwhelm the CPU.
 * **Edge Computing Diagnostics:** A lightweight, dependency-free binary that can be deployed onto headless IoT devices or edge nodes for instantaneous, low-overhead network troubleshooting.
 
@@ -112,29 +114,18 @@ CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unkn
 
 *Note: Vectura requires `sudo` privileges to load eBPF bytecode into the Linux kernel and attach to network interfaces.*
 
-### 1. Launching the Live TUI
+### 1. Launching the Live Dashboard
 
 Run the interactive dashboard on your target network interface (replace `wlan0` with your active interface, e.g., `eth0` or `wlp4s0`).
 
 ```bash
-sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0 tui
+sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0
 
 ```
 
-🛑 **Controls:** Press `q` or `Esc` to safely detach the kernel hook, restore the terminal, and exit.
+🛑 **Controls:** Press `q` or `Esc` to safely detach the kernel hooks, restore the terminal, and exit.
 
-### 2. Launching the Headless Server
-
-For continuous monitoring, run Vectura as a background server exposing a REST API.
-
-```bash
-sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0 server --port 3000
-
-```
-
-📡 **Test the API:** `curl http://localhost:3000/metrics`
-
-### 3. Manual Cleanup (Failsafe)
+### 2. Manual Cleanup (Failsafe)
 
 If the application exits abruptly (e.g., SIGKILL) and the eBPF hook fails to detach automatically, you can manually clear it using the `tc` command:
 
@@ -147,18 +138,19 @@ sudo tc qdisc del dev wlan0 clsact
 
 ## 🗺️ Development Roadmap
 
-* [x] eBPF Ingress Hook Initialization
+* [x] eBPF Ingress & Egress Hook Initialization
 * [x] Asynchronous Multi-Core `PerfEventArray` Kernel-to-User IPC
-* [x] Live Responsive Ratatui Terminal Interface
-* [x] Deep Packet Inspection (TCP/UDP Port Extraction & IHL Calculation)
+* [x] Live Responsive Ratatui Terminal Interface with Sparkline Graphs
+* [x] Deep Packet Inspection (TCP/UDP Port Extraction, IHL Parsing, TCP Flags)
+* [ ] GeoIP & ASN Mapping Integration via MaxMind
 * [ ] SQLite Persistent Logging via SQLx
-* [ ] Prometheus Metrics Exporter
+* [ ] Prometheus Metrics Exporter & Headless Axum Server
 * [ ] Implement `RingBuf` for kernel 5.8+ optimization
 
 ---
 
 ## 🤝 Contributing
-Still W.I.P
+
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
 Please see our technical suggestions above in the Roadmap or check out the [Issues tab](https://www.google.com/search?q=../../issues) for `good first issue` tags (like IPv6 support or DNS resolution).

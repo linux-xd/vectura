@@ -2,183 +2,148 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::Span,
-    widgets::{Block, Borders, BorderType, Cell, Row, Table},
+    widgets::{Block, Borders, BorderType, Cell, Row, Table, Sparkline},
     Frame,
 };
-use std::net::Ipv4Addr;
-use vectura_common::PacketEvent;
+use crate::AppState;
 
-pub struct TrafficRow {
-    pub src_ip: Ipv4Addr,
-    pub src_port: u16,
-    pub dst_ip: Ipv4Addr,
-    pub dst_port: u16,
-    pub protocol: u8,
-    pub size: u32,
-}
-
-impl From<PacketEvent> for TrafficRow {
-    fn from(event: PacketEvent) -> Self {
-        Self {
-            src_ip: Ipv4Addr::from(event.saddr),
-            src_port: event.sport,
-            dst_ip: Ipv4Addr::from(event.daddr),
-            dst_port: event.dport,
-            protocol: event.protocol,
-            size: event.length,
-        }
-    }
-}
-
-impl TrafficRow {
-    fn is_private(ip: &Ipv4Addr) -> bool {
-        ip.is_private() || ip.is_loopback()
-    }
-
-    pub fn remote_target(&self) -> String {
-        if !Self::is_private(&self.src_ip) {
-            format!("{}", self.src_ip)
-        } else if !Self::is_private(&self.dst_ip) {
-            format!("{}", self.dst_ip)
-        } else {
-            "LAN / NAT Internal".to_string()
-        }
-    }
-
-pub fn protocol_name(&self) -> String {
-        if self.src_port == 53 || self.dst_port == 53 {
-            "DNS (53)".to_string()
-        } else {
-            match self.protocol {
-                6 => "TCP".to_string(),
-                17 => "UDP".to_string(),
-                1 => "ICMP".to_string(),
-                _ => format!("{}", self.protocol),
-            }
-        }
-    }
-}
-
-pub fn render_ui(frame: &mut Frame, traffic_data: &[TrafficRow], total_packets: u64, interface: &str) {
-    let chunks = Layout::default()
+pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
+    let main_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(3),  // Status Bar
+            Constraint::Length(10), // Analytics Dashboard
+            Constraint::Min(0),     // Live Traffic Table
+        ])
         .split(frame.area());
 
-    // Modern Top Status Bar
+    // --- 1. Status Bar ---
     let status_text = format!(
         " 🌊 Vectura Engine | 🌐 Interface: {} | 📦 Total Packets: {} ",
-        interface, total_packets
+        interface, state.total_packets
     );
     let status_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(Span::styled(
-            status_text,
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ));
-    frame.render_widget(status_block, chunks[0]);
+        .title(Span::styled(status_text, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    frame.render_widget(status_block, main_chunks[0]);
 
-    let available_rows = chunks[1].height.saturating_sub(3) as usize;
-    let start_index = traffic_data.len().saturating_sub(available_rows);
-    let visible_traffic = &traffic_data[start_index..];
+    // --- 2. Analytics Dashboard ---
+    let analytics_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(main_chunks[1]);
 
-    // Bold dashed separator for the btop aesthetic
-    let sep_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
-    let sep_char = "┇"; 
+    // Top Flows (Left)
+    let top_talkers = state.top_talkers();
+    let talker_rows: Vec<Row> = top_talkers.iter().enumerate().map(|(i, (flow, bytes))| {
+        Row::new(vec![
+            Cell::from(format!(" #{} ", i + 1)).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(format!(" {} ", flow)).style(Style::default().fg(Color::LightCyan)),
+            Cell::from(format!(" {} KB ", bytes / 1024)).style(Style::default().fg(Color::LightRed)),
+        ])
+    }).collect();
 
-    let rows: Vec<Row> = visible_traffic
-        .iter()
-        .map(|data| {
-            let src_ip_str = data.src_ip.to_string();
-            let src_port_str = data.src_port.to_string();
-            let dst_ip_str = data.dst_ip.to_string();
-            let dst_port_str = data.dst_port.to_string();
-            let proto_str = data.protocol_name();
-            let remote_str = data.remote_target();
-            let size_str = format!("{} B", data.size);
+    let talker_table = Table::new(talker_rows, [Constraint::Length(5), Constraint::Min(35), Constraint::Min(10)])
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title(" 🏆 Top Flows (Src ⟶ Dst) ").style(Style::default().fg(Color::Yellow)));
+    frame.render_widget(talker_table, analytics_chunks[0]);
 
-            let proto_style = match proto_str.as_str() {
-                p if p.contains("DNS") => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                "TCP" => Style::default().fg(Color::Yellow),
-                "UDP" => Style::default().fg(Color::Magenta),
-                _ => Style::default().fg(Color::Gray),
-            };
-
-            let sep = Cell::from(sep_char).style(sep_style);
-
-            Row::new(vec![
-                sep.clone(),
-                Cell::from(format!(" {} ", src_ip_str)).style(Style::default().fg(Color::LightCyan)),
-                sep.clone(),
-                Cell::from(format!(" {} ", src_port_str)).style(Style::default().fg(Color::DarkGray)),
-                sep.clone(),
-                Cell::from(format!(" {} ", dst_ip_str)).style(Style::default().fg(Color::LightGreen)),
-                sep.clone(),
-                Cell::from(format!(" {} ", dst_port_str)).style(Style::default().fg(Color::DarkGray)),
-                sep.clone(),
-                Cell::from(format!(" {} ", remote_str)).style(Style::default().fg(Color::LightBlue)),
-                sep.clone(),
-                Cell::from(format!(" {} ", proto_str)).style(proto_style),
-                sep.clone(),
-                Cell::from(format!(" {} ", size_str)).style(Style::default().fg(Color::LightRed)),
-                sep.clone(), // Final right-side border
-            ])
-        })
-        .collect();
-
-    // Dynamic Spreading Layout (No filler columns)
-    let widths = [
-        Constraint::Length(1), // 0: ┇ (Far Left Border)
-        Constraint::Min(16),   // 1: Src IP
-        Constraint::Length(1), // 2: ┇
-        Constraint::Min(7),    // 3: Src Port
-        Constraint::Length(1), // 4: ┇
-        Constraint::Min(16),   // 5: Dst IP
-        Constraint::Length(1), // 6: ┇
-        Constraint::Min(7),    // 7: Dst Port
-        Constraint::Length(1), // 8: ┇
-        Constraint::Min(16),   // 9: Target IP
-        Constraint::Length(1), // 10: ┇
-        Constraint::Min(9),    // 11: Protocol
-        Constraint::Length(1), // 12: ┇
-        Constraint::Min(10),   // 13: Size
-        Constraint::Length(1), // 14: ┇ (Far Right Border)
-    ];
-
-    let header = Row::new(vec![
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Source IP"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Port"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Destination IP"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Port"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Target IP"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Protocol"),
-        Cell::from(sep_char).style(sep_style),
-        Cell::from(" Size"),
-        Cell::from(sep_char).style(sep_style),
-    ])
-    .style(Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD));
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(0) // Forces separators to stay crisp without gaps
+    // Live Bandwidth Graph (Right)
+    let mbps = state.current_mbps;
+    let speed_text = format!("{:.2} Mbps", mbps);
+    
+    let sparkline = Sparkline::default()
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray))
                 .title(Span::styled(
-                    " 📡 Live Traffic ",
-                    Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD),
-                )),
-        );
+                    format!(" 🚀 Live Ingress Bandwidth ( {} ) ", speed_text),
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ))
+                .style(Style::default().fg(Color::DarkGray)),
+        )
+        .data(&state.bandwidth_history)
+        .style(Style::default().fg(Color::LightGreen));
 
-    frame.render_widget(table, chunks[1]);
+    frame.render_widget(sparkline, analytics_chunks[1]);
+
+    // --- 3. Live Traffic Table ---
+    let available_rows = main_chunks[2].height.saturating_sub(3) as usize;
+    let start_index = state.traffic_history.len().saturating_sub(available_rows);
+    let visible_traffic = &state.traffic_history[start_index..];
+
+    let sep_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD);
+    let sep_char = "┇"; 
+
+    let rows: Vec<Row> = visible_traffic.iter().map(|data| {
+        let proto_style = match data.protocol {
+            17 => Style::default().fg(Color::Magenta), // UDP
+            6 => Style::default().fg(Color::Yellow),   // TCP
+            _ => Style::default().fg(Color::Gray),
+        };
+        let sep = Cell::from(sep_char).style(sep_style);
+        let proto_combo = format!(" {} ({}) ", data.protocol, data.protocol_name());
+
+        // Direction logic and bold coloring
+        let dir_str = data.direction_symbol();
+        let dir_style = if dir_str == "<--" {
+            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)
+        };
+
+        Row::new(vec![
+            sep.clone(),
+            Cell::from(format!(" {} ", data.timestamp)).style(Style::default().fg(Color::DarkGray)),
+            sep.clone(),
+            Cell::from(format!(" {} ", data.src_ip)).style(Style::default().fg(Color::LightCyan)),
+            sep.clone(),
+            Cell::from(format!(" {} ", data.src_port)).style(Style::default().fg(Color::DarkGray)),
+            sep.clone(),
+            Cell::from(format!(" {} ", dir_str)).style(dir_style), // INJECTED DIRECTION COLUMN
+            sep.clone(),
+            Cell::from(format!(" {} ", data.dst_ip)).style(Style::default().fg(Color::LightGreen)),
+            sep.clone(),
+            Cell::from(format!(" {} ", data.dst_port)).style(Style::default().fg(Color::DarkGray)),
+            sep.clone(),
+            Cell::from(proto_combo).style(proto_style),
+            sep.clone(),
+            Cell::from(format!(" {} B ", data.size)).style(Style::default().fg(Color::LightRed)),
+            sep.clone(), 
+        ])
+    }).collect();
+
+    // Added the Constraint::Min(5) for the Dir column
+    let widths = [
+        Constraint::Length(1), Constraint::Min(10), // Time
+        Constraint::Length(1), Constraint::Min(16), // Src IP
+        Constraint::Length(1), Constraint::Min(7),  // Src Port
+        Constraint::Length(1), Constraint::Min(5),  // Dir
+        Constraint::Length(1), Constraint::Min(16), // Dst IP
+        Constraint::Length(1), Constraint::Min(7),  // Dst Port
+        Constraint::Length(1), Constraint::Min(18), // Protocol
+        Constraint::Length(1), Constraint::Min(10), // Size
+        Constraint::Length(1),
+    ];
+
+    let header = Row::new(vec![
+        Cell::from(sep_char).style(sep_style),
+        Cell::from(" Time"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Source IP"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Port"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Dir"), Cell::from(sep_char).style(sep_style), // INJECTED HEADER
+        Cell::from(" Destination IP"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Port"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Protocol"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Size"), Cell::from(sep_char).style(sep_style),
+    ]).style(Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD));
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .column_spacing(0)
+        .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(Color::DarkGray)).title(" 📡 Packet Stream "));
+
+    frame.render_widget(table, main_chunks[2]);
 }

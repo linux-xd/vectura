@@ -1,4 +1,5 @@
 mod tui;
+use maxminddb::{geoip2, Reader};
 
 use aya::maps::AsyncPerfEventArray;
 use aya::programs::{tc, SchedClassifier, TcAttachType};
@@ -41,6 +42,7 @@ pub struct TrafficRow {
     pub ttl: u8,
     pub tcp_flags: u8,
     pub size: u32,
+    pub geo_location: String, // NEW: Holds ASN or Country Code
 }
 
 impl TrafficRow {
@@ -101,41 +103,79 @@ pub struct AppState {
     pub ip_bytes: HashMap<String, u64>,
     pub bytes_last_second: u64,
     pub current_mbps: f64,
-    pub bandwidth_history: Vec<u64>, // NEW: Track graph data points
+    pub bandwidth_history: Vec<u64>,
     pub last_tick: Instant,
+    pub geo_reader: Option<Reader<&'static [u8]>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        let db_bytes = include_bytes!("../../GeoLite2-City.mmdb"); 
+        
+        let geo_reader = match Reader::from_source(db_bytes.as_slice()) {
+            Ok(reader) => Some(reader),
+            Err(e) => panic!("\n\n❌ Failed to parse the embedded GeoIP Database!\nError: {}\n\n", e),
+        };
+
         Self {
             total_packets: 0,
             traffic_history: Vec::new(),
             ip_bytes: HashMap::new(),
             bytes_last_second: 0,
             current_mbps: 0.0,
-            bandwidth_history: vec![0; 100], // NEW: Pre-fill with 100 seconds of zeros
+            bandwidth_history: vec![0; 100],
             last_tick: Instant::now(),
+            geo_reader,
         }
     }
 
-pub fn process_packet(&mut self, row: TrafficRow) {
+    // NEW: GeoIP Lookup Helper
+    pub fn lookup_geo(&self, ip: Ipv4Addr) -> String {
+        if ip.is_private() || ip.is_loopback() {
+            return "LOCAL".to_string();
+        }
+
+        if let Some(reader) = &self.geo_reader {
+            let ip_addr = std::net::IpAddr::V4(ip);
+            
+            // 1. lookup() takes NO generic args and returns a LookupResult handle
+            if let Ok(result) = reader.lookup(ip_addr) {
+                // 2. decode::<T>() extracts the model struct
+                if let Ok(Some(city)) = result.decode::<geoip2::City>() {
+                    // 3. city.country is now accessed directly, iso_code is an Option
+                    if let Some(iso_code) = city.country.iso_code {
+                        return iso_code.to_string(); 
+                    }
+                }
+            }
+        }
+        "N/A".to_string()
+    }
+
+    // THIS is the function that processes incoming packets from the channel
+    pub fn process_packet(&mut self, mut row: TrafficRow) {
         self.total_packets += 1;
         self.bytes_last_second += row.size as u64;
 
-        // Change this to track the full flow from Source to Destination!
+        // Resolve GeoIP for the remote target and attach it to the row
+        let target_ip = if row.dst_ip.is_private() { row.src_ip } else { row.dst_ip };
+        row.geo_location = self.lookup_geo(target_ip);
+
+        // Track Top Flows
         let flow_str = format!("{} ⟶ {}", row.src_ip, row.dst_ip);
         *self.ip_bytes.entry(flow_str).or_insert(0) += row.size as u64;
 
+        // Store in history for the TUI table
         self.traffic_history.push(row);
         if self.traffic_history.len() > 1000 {
             self.traffic_history.remove(0);
         }
     }
 
+    // THIS handles the 1-second bandwidth timer
     pub fn on_tick(&mut self) {
         self.current_mbps = (self.bytes_last_second as f64 * 8.0) / 1_000_000.0;
         
-        // NEW: Push the raw bytes into our history graph and trim it
         self.bandwidth_history.push(self.bytes_last_second);
         if self.bandwidth_history.len() > 100 {
             self.bandwidth_history.remove(0);
@@ -145,6 +185,7 @@ pub fn process_packet(&mut self, row: TrafficRow) {
         self.last_tick = Instant::now();
     }
 
+    // THIS calculates the Top Talkers for the dashboard
     pub fn top_talkers(&self) -> Vec<(String, u64)> {
         let mut talkers: Vec<_> = self.ip_bytes.iter().map(|(k, v)| (k.clone(), *v)).collect();
         talkers.sort_by(|a, b| b.1.cmp(&a.1));
@@ -202,6 +243,7 @@ let _ = tc::qdisc_add_clsact(&args.interface);
                         ttl: event.ttl,
                         tcp_flags: event.tcp_flags,
                         size: event.size,
+                        geo_location: String::new(), // Starts empty, filled by process_packet!
                     };
 
                     let _ = tx.send(row).await;

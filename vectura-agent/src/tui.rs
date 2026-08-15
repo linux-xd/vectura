@@ -102,11 +102,13 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
             sep.clone(),
             Cell::from(format!(" {} ", data.src_port)).style(Style::default().fg(Color::DarkGray)),
             sep.clone(),
-            Cell::from(format!(" {} ", dir_str)).style(dir_style), // INJECTED DIRECTION COLUMN
+            Cell::from(format!(" {} ", dir_str)).style(dir_style),
             sep.clone(),
             Cell::from(format!(" {} ", data.dst_ip)).style(Style::default().fg(Color::LightGreen)),
             sep.clone(),
             Cell::from(format!(" {} ", data.dst_port)).style(Style::default().fg(Color::DarkGray)),
+            sep.clone(),
+            Cell::from(format!(" {} ", data.geo_location)).style(Style::default().fg(Color::Yellow)), // INJECTED GEO
             sep.clone(),
             Cell::from(proto_combo).style(proto_style),
             sep.clone(),
@@ -115,7 +117,7 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         ])
     }).collect();
 
-    // Added the Constraint::Min(5) for the Dir column
+    // Added the Constraint::Min(7) for the Geo column
     let widths = [
         Constraint::Length(1), Constraint::Min(10), // Time
         Constraint::Length(1), Constraint::Min(16), // Src IP
@@ -123,6 +125,7 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         Constraint::Length(1), Constraint::Min(5),  // Dir
         Constraint::Length(1), Constraint::Min(16), // Dst IP
         Constraint::Length(1), Constraint::Min(7),  // Dst Port
+        Constraint::Length(1), Constraint::Min(7),  // Geo
         Constraint::Length(1), Constraint::Min(18), // Protocol
         Constraint::Length(1), Constraint::Min(10), // Size
         Constraint::Length(1),
@@ -133,9 +136,10 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         Cell::from(" Time"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Source IP"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Port"), Cell::from(sep_char).style(sep_style),
-        Cell::from(" Dir"), Cell::from(sep_char).style(sep_style), // INJECTED HEADER
+        Cell::from(" Dir"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Destination IP"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Port"), Cell::from(sep_char).style(sep_style),
+        Cell::from(" Geo"), Cell::from(sep_char).style(sep_style), // INJECTED HEADER
         Cell::from(" Protocol"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Size"), Cell::from(sep_char).style(sep_style),
     ]).style(Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD));

@@ -18,3 +18,11 @@ log = "0.4"
 env_logger = "0.11"
 vectura-common = { path = "../vectura-common" }
 chrono = "0.4.45"
+maxminddb = "0.30.0"
+
+[profile.release]
+opt-level = "z"       # Optimize for minimum binary size
+lto = true            # Enable Link Time Optimization to remove dead code
+codegen-units = 1     # Maximize optimization at the cost of compilation time
+panic = "abort"       # Remove panic unwinding infrastructure overhead
+strip = "symbols"     # Strip heavy debugging symbols from the binary

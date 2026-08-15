@@ -86,7 +86,6 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         let sep = Cell::from(sep_char).style(sep_style);
         let proto_combo = format!(" {} ({}) ", data.protocol, data.protocol_name());
 
-        // Direction logic and bold coloring
         let dir_str = data.direction_symbol();
         let dir_style = if dir_str == "<--" {
             Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
@@ -108,9 +107,11 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
             sep.clone(),
             Cell::from(format!(" {} ", data.dst_port)).style(Style::default().fg(Color::DarkGray)),
             sep.clone(),
-            Cell::from(format!(" {} ", data.geo_location)).style(Style::default().fg(Color::Yellow)), // INJECTED GEO
+            Cell::from(format!(" {} ", data.geo_location)).style(Style::default().fg(Color::Yellow)),
             sep.clone(),
-            Cell::from(proto_combo).style(proto_style),
+            Cell::from(format!(" {} ", data.asn)).style(Style::default().fg(Color::Cyan)), // ASN Column
+            sep.clone(),
+            Cell::from(proto_combo).style(proto_style), // Single usage of proto_combo!
             sep.clone(),
             Cell::from(format!(" {} B ", data.size)).style(Style::default().fg(Color::LightRed)),
             sep.clone(), 
@@ -125,7 +126,8 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         Constraint::Length(1), Constraint::Min(5),  // Dir
         Constraint::Length(1), Constraint::Min(16), // Dst IP
         Constraint::Length(1), Constraint::Min(7),  // Dst Port
-        Constraint::Length(1), Constraint::Min(7),  // Geo
+        Constraint::Length(1), Constraint::Min(5),  // Geo
+        Constraint::Length(1), Constraint::Min(35), // ASN
         Constraint::Length(1), Constraint::Min(18), // Protocol
         Constraint::Length(1), Constraint::Min(10), // Size
         Constraint::Length(1),
@@ -140,6 +142,7 @@ pub fn render_ui(frame: &mut Frame, state: &AppState, interface: &str) {
         Cell::from(" Destination IP"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Port"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Geo"), Cell::from(sep_char).style(sep_style), // INJECTED HEADER
+        Cell::from(" ASN"), Cell::from(sep_char).style(sep_style), // INJECTED ASN HEADER
         Cell::from(" Protocol"), Cell::from(sep_char).style(sep_style),
         Cell::from(" Size"), Cell::from(sep_char).style(sep_style),
     ]).style(Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD));

@@ -42,7 +42,8 @@ pub struct TrafficRow {
     pub ttl: u8,
     pub tcp_flags: u8,
     pub size: u32,
-    pub geo_location: String, // NEW: Holds ASN or Country Code
+    pub geo_location: String,
+    pub asn: String, // NEW: Holds the ASN and Organization
 }
 
 impl TrafficRow {
@@ -105,7 +106,8 @@ pub struct AppState {
     pub current_mbps: f64,
     pub bandwidth_history: Vec<u64>,
     pub last_tick: Instant,
-    pub geo_reader: Option<Reader<&'static [u8]>>,
+    pub geo_reader: Option<Reader<&'static [u8]>>, 
+    pub asn_reader: Option<Reader<&'static [u8]>>, // NEW: ASN Reader
 }
 
 impl AppState {
@@ -117,6 +119,13 @@ impl AppState {
             Err(e) => panic!("\n\n❌ Failed to parse the embedded GeoIP Database!\nError: {}\n\n", e),
         };
 
+        // 2. ASN Database
+        let asn_bytes = include_bytes!("../../GeoLite2-ASN.mmdb"); 
+        let asn_reader = match Reader::from_source(asn_bytes.as_slice()) {
+            Ok(reader) => Some(reader),
+            Err(e) => panic!("\n\n❌ Failed to parse the embedded ASN Database!\nError: {}\n\n", e),
+        };
+
         Self {
             total_packets: 0,
             traffic_history: Vec::new(),
@@ -126,6 +135,7 @@ impl AppState {
             bandwidth_history: vec![0; 100],
             last_tick: Instant::now(),
             geo_reader,
+            asn_reader,
         }
     }
 
@@ -152,6 +162,39 @@ impl AppState {
         "N/A".to_string()
     }
 
+    pub fn lookup_asn(&self, ip: Ipv4Addr) -> String {
+        if ip.is_private() || ip.is_loopback() {
+            return "LOCAL".to_string();
+        }
+
+        if let Some(reader) = &self.asn_reader {
+            let ip_addr = std::net::IpAddr::V4(ip);
+            
+            if let Ok(result) = reader.lookup(ip_addr) {
+                if let Ok(Some(asn)) = result.decode::<geoip2::Asn>() {
+                    let mut asn_str = String::new();
+                    
+                    if let Some(number) = asn.autonomous_system_number {
+                        asn_str.push_str(&format!("AS{} ", number));
+                    }
+                    if let Some(org) = asn.autonomous_system_organization {
+                        asn_str.push_str(org);
+                    }
+                    
+                    if !asn_str.is_empty() {
+                        // Truncate excessively long org names to prevent UI overlap
+                        if asn_str.len() > 35 {
+                            asn_str.truncate(32);
+                            asn_str.push_str("...");
+                        }
+                        return asn_str;
+                    }
+                }
+            }
+        }
+        "N/A".to_string()
+    }
+
     // THIS is the function that processes incoming packets from the channel
     pub fn process_packet(&mut self, mut row: TrafficRow) {
         self.total_packets += 1;
@@ -160,6 +203,7 @@ impl AppState {
         // Resolve GeoIP for the remote target and attach it to the row
         let target_ip = if row.dst_ip.is_private() { row.src_ip } else { row.dst_ip };
         row.geo_location = self.lookup_geo(target_ip);
+        row.asn = self.lookup_asn(target_ip);
 
         // Track Top Flows
         let flow_str = format!("{} ⟶ {}", row.src_ip, row.dst_ip);
@@ -244,6 +288,7 @@ let _ = tc::qdisc_add_clsact(&args.interface);
                         tcp_flags: event.tcp_flags,
                         size: event.size,
                         geo_location: String::new(), // Starts empty, filled by process_packet!
+                        asn: String::new(),
                     };
 
                     let _ = tx.send(row).await;

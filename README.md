@@ -28,12 +28,13 @@ Powered by the Aya framework, Vectura proves that Rust can dominate both user-sp
 
 * 🛡️ **100% Rust Architecture & Cryptography:** Both the user-space agent and the kernel-space eBPF programs are written entirely in safe Rust. Utilizing `rustls` instead of OpenSSL eliminates messy C-dependencies and `pkg-config` headaches. No BCC dependencies and no Clang required at runtime.
 * ⚡ **Bidirectional Kernel-Level Tracking (TC):** Vectura attaches directly to both the Traffic Control (TC) **Ingress** and **Egress** hooks. It parses the IPv4 IHL dynamically to extract L4 Ports, TTLs, and TCP Flags (`SYN`, `ACK`, `FIN`, `RST`) the microsecond they hit the network interface.
+* 🌍 **Zero-Dependency GeoIP & ASN Mapping:** Uses `include_bytes!` to embed both the MaxMind GeoLite2-City and GeoLite2-ASN databases directly into the compiled binary. Instantaneously maps remote IP addresses to their Country Code (e.g., `US`, `DE`) and owning Organization (e.g., `AS13335 Cloudflare, Inc.`) in memory without needing external files at runtime.
 * 🖥️ **Advanced Multi-Pane Dashboard:** A highly responsive, `btop`-inspired terminal UI featuring:
   * **Live Bandwidth Sparkline:** A 100-tick rolling graph visualizing real-time network throughput (Mbps).
   * **Top Flows Leaderboard:** Aggregated analytics showing the highest bandwidth `Source ⟶ Destination` pairings.
-  * **Directional Packet Stream:** Color-coded forward (`-->`) and reverse (`<--`) traffic indicators for instantaneous flow comprehension.
+  * **Directional Packet Stream:** Color-coded forward (`-->`) and reverse (`<--`) traffic indicators alongside rich location and protocol data.
 * 🔀 **Non-Blocking Async Engine:** Powered by a `tokio::select!` event loop, Vectura seamlessly handles multi-core eBPF telemetry ingestion, 1-second interval aggregations, and ~30 FPS UI rendering without ever dropping a packet.
-* 🌐 **Universal Static Binary:** Cross-compiled using `musl`, resulting in a zero-dependency, statically linked executable that runs natively on *any* x86_64 Linux distribution (Ubuntu, Arch, Debian, Fedora, etc.).
+* 💎 **Ultra-Optimized Static Binary:** Cross-compiled using `musl` with aggressive LTO and size optimizations (`opt-level = "z"`). The result is a highly compressed, zero-dependency executable that runs natively on *any* x86_64 Linux distribution.
 
 ---
 
@@ -45,7 +46,7 @@ Vectura is organized as a Cargo workspace to cleanly separate the compilation ta
 vectura/
 ├── vectura-common/   📦 Shared data structs used by both Kernel & User
 ├── vectura-ebpf/     🧠 Kernel-Space Code (Compiles to eBPF bytecode)
-├── vectura-agent/    💻 User-Space Code (Tokio Async, Ratatui, Axum Server)
+├── vectura-agent/    💻 User-Space Code (Tokio Async, Ratatui, Embedded DBs)
 └── xtask/            🛠️ Build automation scripts
 
 ```
@@ -87,6 +88,12 @@ Depending on your distribution, install the `musl` wrapper for statically compil
 * **Ubuntu/Debian:** `sudo apt install musl-tools`
 * **Fedora:** `sudo dnf install musl-gcc`
 
+**4. Download the GeoIP & ASN Databases (Build-Time Only):**
+
+* Create a free account at [MaxMind](https://www.google.com/search?q=https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
+* Download both the **GeoLite2 City** and **GeoLite2 ASN** databases (`.mmdb` format).
+* Place `GeoLite2-City.mmdb` and `GeoLite2-ASN.mmdb` in the root directory of this repository (they are included in `.gitignore` so they won't bloat your Git history).
+
 ---
 
 ## 🚀 Compile & Build Guide
@@ -101,7 +108,7 @@ cargo +nightly build --package vectura-ebpf --release --target bpfel-unknown-non
 ```
 
 **Step 2: Compile the User-Space Universal Binary (Requires Stable)**
-Build the statically linked user-space agent using the `musl` wrapper. This ensures maximum portability across all Linux distros.
+Build the statically linked user-space agent using the `musl` wrapper. This step takes a few minutes as the compiler performs Link-Time Optimization (LTO) and embeds the MaxMind databases directly into the binary's static memory.
 
 ```bash
 CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unknown-linux-musl
@@ -116,7 +123,7 @@ CC_x86_64_unknown_linux_musl=musl-gcc cargo build --release --target x86_64-unkn
 
 ### 1. Launching the Live Dashboard
 
-Run the interactive dashboard on your target network interface (replace `wlan0` with your active interface, e.g., `eth0` or `wlp4s0`).
+Run the interactive dashboard on your target network interface (replace `wlan0` with your active interface, e.g., `eth0` or `wlp4s0`). Because the databases are embedded, you can copy this single binary to any other machine and run it as-is!
 
 ```bash
 sudo ./target/x86_64-unknown-linux-musl/release/vectura-agent --interface wlan0
@@ -142,7 +149,7 @@ sudo tc qdisc del dev wlan0 clsact
 * [x] Asynchronous Multi-Core `PerfEventArray` Kernel-to-User IPC
 * [x] Live Responsive Ratatui Terminal Interface with Sparkline Graphs
 * [x] Deep Packet Inspection (TCP/UDP Port Extraction, IHL Parsing, TCP Flags)
-* [ ] GeoIP & ASN Mapping Integration via MaxMind
+* [x] GeoIP & ASN Mapping Integration via MaxMind (Embedded Zero-Dependency)
 * [ ] SQLite Persistent Logging via SQLx
 * [ ] Prometheus Metrics Exporter & Headless Axum Server
 * [ ] Implement `RingBuf` for kernel 5.8+ optimization
@@ -157,4 +164,5 @@ Please see our technical suggestions above in the Roadmap or check out the [Issu
 
 ---
 
-*Built with [Aya](https://aya-rs.dev/) — The future of eBPF is Rust. 🦀*
+*Built with [Aya](https://www.google.com/url?sa=E&source=gmail&q=https://aya-rs.dev/) — The future of eBPF is Rust. 🦀*
+

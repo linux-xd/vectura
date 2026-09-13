@@ -3,15 +3,16 @@
 
 use aya_ebpf::{
     macros::{classifier, map},
-    maps::PerfEventArray,
+    maps::RingBuf,
     programs::TcContext,
 };
 use vectura_common::{
     PacketEvent, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_RST, TCP_FLAG_SYN, TCP_FLAG_URG,
 };
 
+// 1. Defined a 256KB shared RingBuffer for Kernel 5.8+ optimization
 #[map]
-static mut EVENTS: PerfEventArray<PacketEvent> = PerfEventArray::new(0);
+static EVENTS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 
 const ETH_HLEN: usize = 14;
 const IP_PROTO_TCP: u8 = 6;
@@ -19,13 +20,23 @@ const IP_PROTO_UDP: u8 = 17;
 
 #[classifier]
 pub fn vectura_ingress(ctx: TcContext) -> i32 {
-    match try_vectura_ingress(&ctx) {
+    match try_process_packet(&ctx) {
         Ok(ret) => ret,
         Err(_) => 0, // 0 translates to TC_ACT_OK in the kernel
     }
 }
 
-fn try_vectura_ingress(ctx: &TcContext) -> Result<i32, ()> {
+// 2. Added the Egress hook to support the bidirectional tracking mentioned in the README
+#[classifier]
+pub fn vectura_egress(ctx: TcContext) -> i32 {
+    match try_process_packet(&ctx) {
+        Ok(ret) => ret,
+        Err(_) => 0,
+    }
+}
+
+// Renamed from `try_vectura_ingress` since it now handles both directions
+fn try_process_packet(ctx: &TcContext) -> Result<i32, ()> {
     let eth_type: u16 = ctx.load(12).map_err(|_| ())?;
     if u16::from_be(eth_type) != 0x0800 {
         return Ok(0);
@@ -74,8 +85,10 @@ fn try_vectura_ingress(ctx: &TcContext) -> Result<i32, ()> {
         size: packet_size,
     };
 
-    unsafe {
-        EVENTS.output(ctx, &event, 0);
+    // 3. Removed the floating block and correctly nested the RingBuf submission
+    if let Some(mut buf) = EVENTS.reserve::<PacketEvent>(0) {
+        buf.write(event);
+        buf.submit(0);
     }
 
     Ok(0)

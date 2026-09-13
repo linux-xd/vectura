@@ -1,11 +1,10 @@
 mod tui;
 use maxminddb::{geoip2, Reader};
-
-use aya::maps::AsyncPerfEventArray;
+use aya::maps::RingBuf;
+use std::os::fd::AsRawFd;
+use tokio::io::unix::AsyncFd;
 use aya::programs::{tc, SchedClassifier, TcAttachType};
-use aya::util::online_cpus;
 use aya::Bpf;
-use bytes::BytesMut;
 use chrono::Local;
 use clap::Parser;
 use crossterm::{
@@ -43,7 +42,7 @@ pub struct TrafficRow {
     pub tcp_flags: u8,
     pub size: u32,
     pub geo_location: String,
-    pub asn: String, // NEW: Holds the ASN and Organization
+    pub asn: String,
 }
 
 impl TrafficRow {
@@ -89,7 +88,6 @@ impl TrafficRow {
     }
 
     pub fn direction_symbol(&self) -> &'static str {
-        // If the destination IP is your local machine/network, it is inbound reverse traffic
         if self.dst_ip.is_private() || self.dst_ip.is_loopback() {
             "<--"
         } else {
@@ -107,7 +105,7 @@ pub struct AppState {
     pub bandwidth_history: Vec<u64>,
     pub last_tick: Instant,
     pub geo_reader: Option<Reader<&'static [u8]>>, 
-    pub asn_reader: Option<Reader<&'static [u8]>>, // NEW: ASN Reader
+    pub asn_reader: Option<Reader<&'static [u8]>>,
 }
 
 impl AppState {
@@ -119,7 +117,6 @@ impl AppState {
             Err(e) => panic!("\n\n❌ Failed to parse the embedded GeoIP Database!\nError: {}\n\n", e),
         };
 
-        // 2. ASN Database
         let asn_bytes = include_bytes!("../../GeoLite2-ASN.mmdb"); 
         let asn_reader = match Reader::from_source(asn_bytes.as_slice()) {
             Ok(reader) => Some(reader),
@@ -139,7 +136,6 @@ impl AppState {
         }
     }
 
-    // NEW: GeoIP Lookup Helper
     pub fn lookup_geo(&self, ip: Ipv4Addr) -> String {
         if ip.is_private() || ip.is_loopback() {
             return "LOCAL".to_string();
@@ -148,11 +144,8 @@ impl AppState {
         if let Some(reader) = &self.geo_reader {
             let ip_addr = std::net::IpAddr::V4(ip);
             
-            // 1. lookup() takes NO generic args and returns a LookupResult handle
             if let Ok(result) = reader.lookup(ip_addr) {
-                // 2. decode::<T>() extracts the model struct
                 if let Ok(Some(city)) = result.decode::<geoip2::City>() {
-                    // 3. city.country is now accessed directly, iso_code is an Option
                     if let Some(iso_code) = city.country.iso_code {
                         return iso_code.to_string(); 
                     }
@@ -182,7 +175,6 @@ impl AppState {
                     }
                     
                     if !asn_str.is_empty() {
-                        // Truncate excessively long org names to prevent UI overlap
                         if asn_str.len() > 35 {
                             asn_str.truncate(32);
                             asn_str.push_str("...");
@@ -195,28 +187,23 @@ impl AppState {
         "N/A".to_string()
     }
 
-    // THIS is the function that processes incoming packets from the channel
     pub fn process_packet(&mut self, mut row: TrafficRow) {
         self.total_packets += 1;
         self.bytes_last_second += row.size as u64;
 
-        // Resolve GeoIP for the remote target and attach it to the row
         let target_ip = if row.dst_ip.is_private() { row.src_ip } else { row.dst_ip };
         row.geo_location = self.lookup_geo(target_ip);
         row.asn = self.lookup_asn(target_ip);
 
-        // Track Top Flows
         let flow_str = format!("{} ⟶ {}", row.src_ip, row.dst_ip);
         *self.ip_bytes.entry(flow_str).or_insert(0) += row.size as u64;
 
-        // Store in history for the TUI table
         self.traffic_history.push(row);
         if self.traffic_history.len() > 1000 {
             self.traffic_history.remove(0);
         }
     }
 
-    // THIS handles the 1-second bandwidth timer
     pub fn on_tick(&mut self) {
         self.current_mbps = (self.bytes_last_second as f64 * 8.0) / 1_000_000.0;
         
@@ -229,7 +216,6 @@ impl AppState {
         self.last_tick = Instant::now();
     }
 
-    // THIS calculates the Top Talkers for the dashboard
     pub fn top_talkers(&self) -> Vec<(String, u64)> {
         let mut talkers: Vec<_> = self.ip_bytes.iter().map(|(k, v)| (k.clone(), *v)).collect();
         talkers.sort_by(|a, b| b.1.cmp(&a.1));
@@ -241,73 +227,72 @@ impl AppState {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // 1. Load embedded BPF program
-let mut ebpf = Bpf::load(aya::include_bytes_aligned!(
+    let mut ebpf = Bpf::load(aya::include_bytes_aligned!(
         "../../target/bpfel-unknown-none/release/vectura-ebpf"
     ))?;
 
-    // 2. Attach Traffic Control (TC) ingress hook
-let _ = tc::qdisc_add_clsact(&args.interface);
+    let _ = tc::qdisc_add_clsact(&args.interface);
     let program: &mut SchedClassifier = ebpf
         .program_mut("vectura_ingress")
         .unwrap()
         .try_into()?;
     program.load()?;
     
-    // Catch incoming traffic
     program.attach(&args.interface, TcAttachType::Ingress)?;
     
-    // Catch outgoing traffic (This is the missing piece!)
-    program.attach(&args.interface, TcAttachType::Egress)?;
+    let egress_program: &mut SchedClassifier = ebpf
+        .program_mut("vectura_egress")
+        .unwrap()
+        .try_into()?;
+    egress_program.load()?;
+    egress_program.attach(&args.interface, TcAttachType::Egress)?;
 
-    // 3. Multi-core eBPF async polling setup
     let (tx, rx) = mpsc::channel::<TrafficRow>(1000);
-    let mut perf_array = AsyncPerfEventArray::try_from(ebpf.take_map("EVENTS").unwrap())?;
+    
+    // RingBuf implementation replacing PerfEventArray
+    let mut events = RingBuf::try_from(ebpf.take_map("EVENTS").unwrap())?;
 
-    for cpu_id in online_cpus()? {
-        let mut buf = perf_array.open(cpu_id, None)?;
-        let tx = tx.clone();
+    tokio::spawn(async move {
+        let fd = events.as_raw_fd();
+        let mut async_fd = AsyncFd::new(fd).expect("Failed to initialize AsyncFd");
 
-        tokio::spawn(async move {
-            let mut buffers = vec![BytesMut::with_capacity(1024); 10];
-            loop {
-                let events = buf.read_events(&mut buffers).await.unwrap();
-                for i in 0..events.read {
-                    let buf = &buffers[i];
-                    let ptr = buf.as_ptr() as *const PacketEvent;
-                    let event = unsafe { *ptr };
+        loop {
+            let mut guard = async_fd.readable_mut().await.unwrap();
 
-                    let row = TrafficRow {
-                        timestamp: Local::now().format("%H:%M:%S.%3f").to_string(),
-                        src_ip: Ipv4Addr::from(event.src_ip),
-                        dst_ip: Ipv4Addr::from(event.dst_ip),
-                        src_port: event.src_port,
-                        dst_port: event.dst_port,
-                        protocol: event.protocol,
-                        ttl: event.ttl,
-                        tcp_flags: event.tcp_flags,
-                        size: event.size,
-                        geo_location: String::new(), // Starts empty, filled by process_packet!
-                        asn: String::new(),
-                    };
+            while let Some(item) = events.next() {
+                let raw_event = unsafe { 
+                    std::ptr::read_unaligned(item.as_ptr() as *const PacketEvent) 
+                };
 
-                    let _ = tx.send(row).await;
-                }
+                let row = TrafficRow {
+                    timestamp: Local::now().format("%H:%M:%S.%3f").to_string(),
+                    src_ip: Ipv4Addr::from(raw_event.src_ip),
+                    dst_ip: Ipv4Addr::from(raw_event.dst_ip),
+                    src_port: raw_event.src_port,
+                    dst_port: raw_event.dst_port,
+                    protocol: raw_event.protocol,
+                    ttl: raw_event.ttl,
+                    tcp_flags: raw_event.tcp_flags,
+                    size: raw_event.size,
+                    geo_location: String::new(),
+                    asn: String::new(),
+                };
+
+                let _ = tx.send(row).await;
             }
-        });
-    }
 
-    // 4. Initialize Terminal
+            guard.clear_ready();
+        }
+    });
+
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // 5. Run Application Event Loop
     let res = run_app(&mut terminal, rx, args.interface).await;
 
-    // 6. Terminal Cleanup on Exit
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -326,7 +311,7 @@ async fn run_app(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = AppState::new();
     let mut bandwidth_timer = interval(Duration::from_secs(1));
-    let mut render_timer = interval(Duration::from_millis(33)); // ~30 FPS
+    let mut render_timer = interval(Duration::from_millis(33));
 
     loop {
         tokio::select! {

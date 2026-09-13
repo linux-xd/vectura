@@ -2,7 +2,7 @@
 
 ## Live Dashboard
 
-<img src="assets/ui-demo.png" alt="Vectura UI" width="1000">
+<img src="./assets/ui-demo.png" alt="Vectura UI" width="1000">
 
 **A Type & Memory Safe eBPF Network Analyzer built purely in Rust. 🦀**
 
@@ -33,7 +33,7 @@ Powered by the Aya framework, Vectura proves that Rust can dominate both user-sp
   * **Live Bandwidth Sparkline:** A 100-tick rolling graph visualizing real-time network throughput (Mbps).
   * **Top Flows Leaderboard:** Aggregated analytics showing the highest bandwidth `Source ⟶ Destination` pairings.
   * **Directional Packet Stream:** Color-coded forward (`-->`) and reverse (`<--`) traffic indicators alongside rich location and protocol data.
-* 🔀 **Non-Blocking Async Engine:** Powered by a `tokio::select!` event loop, Vectura seamlessly handles multi-core eBPF telemetry ingestion, 1-second interval aggregations, and ~30 FPS UI rendering without ever dropping a packet.
+* 🔀 **Non-Blocking Async Engine:** Powered by a `tokio::select!` event loop and utilizing a shared **eBPF RingBuf**, Vectura seamlessly handles kernel-to-user IPC telemetry ingestion, 1-second interval aggregations, and ~30 FPS UI rendering with minimal memory overhead for Kernel 5.8+.
 * 💎 **Ultra-Optimized Static Binary:** Cross-compiled using `musl` with aggressive LTO and size optimizations (`opt-level = "z"`). The result is a highly compressed, zero-dependency executable that runs natively on *any* x86_64 Linux distribution.
 
 ---
@@ -63,7 +63,7 @@ vectura/
 
 ## 🛠️ Prerequisites
 
-To build and run Vectura, you need a Linux system (Kernel 5.14+ recommended for BTF support) and the Rust dual-toolchain setup.
+To build and run Vectura, you need a Linux system (Kernel 5.8+ recommended for RingBuf support) and the Rust dual-toolchain setup.
 
 **1. Install Rust Toolchains:**
 
@@ -146,13 +146,12 @@ sudo tc qdisc del dev wlan0 clsact
 ## 🗺️ Development Roadmap
 
 * [x] eBPF Ingress & Egress Hook Initialization
-* [x] Asynchronous Multi-Core `PerfEventArray` Kernel-to-User IPC
+* [x] Shared `RingBuf` Kernel-to-User IPC (Kernel 5.8+ Optimization)
 * [x] Live Responsive Ratatui Terminal Interface with Sparkline Graphs
 * [x] Deep Packet Inspection (TCP/UDP Port Extraction, IHL Parsing, TCP Flags)
 * [x] GeoIP & ASN Mapping Integration via MaxMind (Embedded Zero-Dependency)
 * [ ] SQLite Persistent Logging via SQLx
 * [ ] Prometheus Metrics Exporter & Headless Axum Server
-* [ ] Implement `RingBuf` for kernel 5.8+ optimization
 
 ---
 
@@ -164,5 +163,4 @@ Please see our technical suggestions above in the Roadmap or check out the [Issu
 
 ---
 
-*Built with [Aya](https://www.google.com/url?sa=E&source=gmail&q=https://aya-rs.dev/) — The future of eBPF is Rust. 🦀*
-
+*Built with [Aya](https://aya-rs.dev/) — The future of eBPF is Rust. 🦀*
